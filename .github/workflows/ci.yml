@@ -1,0 +1,64 @@
+# .github/workflows/ci.yml
+# Integração contínua: lint, testes unitários com cobertura mínima e testes com PostgreSQL real.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+
+    services:
+      # Banco descartável só para os testes de integração
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-senha-descartavel
+          POSTGRES_DB: antifraude_teste
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d antifraude_teste"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci-senha-descartavel
+      POSTGRES_DB: antifraude_teste
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check src tests scripts
+
+      - name: Testes unitários com cobertura (mínimo 85%)
+        run: pytest --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Testes de integração (PostgreSQL)
+        run: pytest -m integracao -v
+
+      - name: Avaliação offline (treino + métricas)
+        run: |
+          python scripts/treinar_modelo.py
+          python scripts/avaliar_offline.py
+
+      - name: Publicar relatório de cobertura
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura
+          path: coverage.xml
