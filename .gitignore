@@ -1,0 +1,23 @@
+# .gitignore
+# Segredos
+.env
+
+# Ambiente virtual e caches do Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Artefatos gerados (modelos treinados e dados sintéticos)
+modelos/*.joblib
+dados/*.csv
+
+# IDEs
+.vscode/
+.idea/

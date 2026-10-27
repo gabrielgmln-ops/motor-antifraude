@@ -1,0 +1,61 @@
+# pyproject.toml
+# Definição do pacote "antifraude" (layout src/) e das dependências do projeto.
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "antifraude"
+version = "1.0.0"
+description = "Motor antifraude em tempo real (Kafka + regras + IsolationForest) integrado à Ledger API"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "confluent-kafka==2.6.1",
+    "scikit-learn==1.6.0",
+    "joblib==1.4.2",
+    "psycopg[binary]==3.2.3",
+    "pydantic-settings==2.7.0",
+    # Base de fusos horários: o Windows não traz a base IANA que o zoneinfo usa
+    "tzdata==2024.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0",
+    "httpx==0.28.1",
+    "ruff==0.8.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integracao: testes que exigem PostgreSQL real (rodam no CI com serviço de banco)",
+]
+# Por padrão os testes de integração ficam de fora; use: pytest -m integracao
+addopts = "-m 'not integracao'"
+
+[tool.coverage.run]
+source = ["antifraude"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

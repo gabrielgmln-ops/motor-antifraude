@@ -1,0 +1,99 @@
+# docker-compose.yml
+# Infraestrutura local do Motor Antifraude: Kafka (modo KRaft, sem Zookeeper) e PostgreSQL.
+# Os serviços do próprio motor (consumidor e API) ficam no perfil "app":
+#   docker compose up -d                      -> só a infraestrutura
+#   docker compose --profile app up -d --build -> infraestrutura + motor + painel
+# Todos os segredos vêm do arquivo .env (nunca versionado).
+
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: antifraude-kafka
+    ports:
+      # Porta exposta ao host (Windows) para os scripts Python
+      - "9092:9092"
+    environment:
+      # Um único nó acumulando os papéis de broker e controller
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # Três listeners: interno (entre contêineres), externo (host) e controller (quórum KRaft)
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:19092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Fator de replicação 1 porque existe apenas um broker em desenvolvimento
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Tópicos só são criados explicitamente (evita tópicos fantasmas por erro de digitação)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: antifraude-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      # A sintaxe ${VAR:?mensagem} faz o compose falhar se a variável não existir
+      POSTGRES_USER: ${POSTGRES_USER:?Defina POSTGRES_USER no arquivo .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no arquivo .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB no arquivo .env}
+    volumes:
+      # Volume nomeado: os dados sobrevivem a "docker compose down" (somente "down -v" apaga)
+      - pgdata:/var/lib/postgresql/data
+      # Scripts executados apenas na primeira inicialização do banco
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Consumidor Kafka: lê transações, decide e grava (perfil "app")
+  motor:
+    profiles: ["app"]
+    build: .
+    container_name: antifraude-motor
+    command: ["python", "-m", "antifraude.consumidor"]
+    env_file: .env
+    environment:
+      # Dentro da rede do compose os serviços se acham pelo nome
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+    volumes:
+      - ./modelos:/app/modelos:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # API de métricas e painel (perfil "app")
+  api:
+    profiles: ["app"]
+    build: .
+    container_name: antifraude-api
+    command: ["uvicorn", "antifraude.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
